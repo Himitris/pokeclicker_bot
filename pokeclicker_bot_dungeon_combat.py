@@ -9,6 +9,39 @@ class PokeclickerBotDungeonCombat:
     Gère les combats et interactions avec les coffres/boss
     """
     
+    def get_enemy_health_info(self):
+        """Récupérer les informations de santé de l'ennemi directement depuis l'élément span"""
+        try:
+            # Rechercher l'élément span qui contient les informations de santé
+            health_span = self.driver.find_element(By.CSS_SELECTOR, "span[data-bind*=\"DungeonBattle.enemyPokemon().health()\"]")
+            health_text = health_span.text
+            
+            # Analyser le texte qui devrait être au format "current / max"
+            if "/" in health_text:
+                parts = health_text.split("/")
+                current_health = parts[0].strip().replace(",", "")
+                max_health = parts[1].strip().replace(",", "")
+                
+                try:
+                    current_health = float(current_health)
+                    max_health = float(max_health)
+                    health_percentage = (current_health / max_health) * 100 if max_health > 0 else 0
+                    
+                    return {
+                        "current": current_health,
+                        "max": max_health,
+                        "percentage": health_percentage,
+                        "text": health_text
+                    }
+                except ValueError:
+                    # Si la conversion en nombre échoue
+                    return None
+            
+            return None
+        except Exception as e:
+            # self.log(f"Erreur lors de la lecture des informations de santé: {str(e)}")
+            return None
+    
     def handle_battle(self):
         """Gérer un combat en cliquant sur l'ennemi avec vérification d'efficacité"""
         try:
@@ -17,45 +50,85 @@ class PokeclickerBotDungeonCombat:
             battle_attempts = 0
             max_attempts = 150  # Augmenté pour les combats difficiles
             last_check_time = time.time()
-            last_hp = None
+            last_health_info = None
             stuck_counter = 0
+            consecutive_errors = 0
             
             while self.is_in_battle() and battle_attempts < max_attempts and self.running:
                 current_time = time.time()
                 
-                # Essayer de trouver l'HP actuel de l'ennemi pour suivre les progrès
-                try:
-                    hp_bar = self.driver.find_element(By.CSS_SELECTOR, ".enemyBar.progress-bar")
-                    current_hp = hp_bar.get_attribute("style")  # Généralement contient "width: XX%"
-                except:
-                    current_hp = None
+                # Récupérer les informations de santé actuelles
+                current_health_info = self.get_enemy_health_info()
                 
-                # Vérifier si nous sommes bloqués (HP ne change pas après plusieurs clics)
-                if current_hp == last_hp and (current_time - last_check_time) > 2:
-                    stuck_counter += 1
-                    self.log(f"Combat semble bloqué (HP inchangé après {stuck_counter} vérifications)")
+                # Vérifier si nous avons des informations de santé valides
+                if current_health_info:
+                    consecutive_errors = 0  # Réinitialiser le compteur d'erreurs
                     
-                    if stuck_counter >= 3:
-                        # Essayer différentes approches pour débloquer
-                        self.log("Tentative de déblocage du combat...")
-                        
-                        # Méthode 1: Utiliser directement le JavaScript du jeu
-                        try:
-                            self.driver.execute_script(
-                                "if (typeof DungeonBattle !== 'undefined') { DungeonBattle.clickAttack(); }"
-                            )
-                        except:
-                            pass
-                        
-                        # Méthode 2: Essayer de cliquer sur l'interface du jeu en général
-                        try:
-                            body = self.driver.find_element(By.TAG_NAME, "body")
-                            self.driver.execute_script("arguments[0].click();", body)
-                        except:
-                            pass
-                        
-                        # Réinitialiser le compteur
-                        stuck_counter = 0
+                    # Vérifier si la santé a changé
+                    if last_health_info:
+                        # Comparer les valeurs numériques plutôt que le texte
+                        if abs(current_health_info["current"] - last_health_info["current"]) < 0.1:
+                            # La santé n'a pas changé significativement
+                            if (current_time - last_check_time) > 1:  # Réduit à 1 seconde pour une détection plus rapide
+                                stuck_counter += 1
+                                self.log(f"Combat semble bloqué (HP: {current_health_info['text']}, inchangé après {stuck_counter} vérifications)")
+                                
+                                if stuck_counter >= 3:
+                                    self.log("Tentative de déblocage du combat...")
+                                    
+                                    # Essayer différentes approches pour débloquer
+                                    # Méthode 1: Utiliser directement le JavaScript du jeu avec plus de paramètres
+                                    try:
+                                        self.driver.execute_script("""
+                                            if (typeof DungeonBattle !== 'undefined') {
+                                                // Forcer une attaque avec des paramètres différents
+                                                DungeonBattle.clickAttack();
+                                                
+                                                // Essayer également de cibler directement l'ennemi si possible
+                                                if (DungeonBattle.enemyPokemon()) {
+                                                    DungeonBattle.damage(DungeonBattle.enemyPokemon(), DungeonBattle.playerPokemon().calculateDamage());
+                                                }
+                                            }
+                                        """)
+                                        self.log("Tentative d'attaque via script JavaScript avancé")
+                                    except Exception as je:
+                                        self.log(f"Erreur JavaScript: {str(je)}")
+                                    
+                                    # Méthode 2: Cliquer directement sur l'élément de santé pour "réveiller" l'interface
+                                    try:
+                                        health_element = self.driver.find_element(By.CSS_SELECTOR, ".enemyBar.progress-bar")
+                                        self.driver.execute_script("arguments[0].click();", health_element)
+                                    except:
+                                        pass
+                                    
+                                    # Méthode 3: Cliquer ailleurs puis revenir sur l'ennemi
+                                    try:
+                                        body = self.driver.find_element(By.TAG_NAME, "body")
+                                        self.driver.execute_script("arguments[0].click();", body)
+                                        time.sleep(0.2)
+                                    except:
+                                        pass
+                                    
+                                    # Réinitialiser les compteurs
+                                    stuck_counter = 0
+                                    last_check_time = current_time
+                        else:
+                            # La santé a changé, réinitialiser les compteurs
+                            if battle_attempts % 10 == 0 or stuck_counter > 0:
+                                self.log(f"Progression du combat: {current_health_info['text']} ({current_health_info['percentage']:.1f}%)")
+                            stuck_counter = 0
+                            last_check_time = current_time
+                    
+                    # Mettre à jour les informations de santé
+                    last_health_info = current_health_info
+                else:
+                    consecutive_errors += 1
+                    if consecutive_errors > 5:
+                        # Si on ne peut pas lire les informations de santé plusieurs fois de suite
+                        # vérifier si on est toujours en combat
+                        if not self.is_in_battle():
+                            self.log("Combat terminé (détecté par absence d'informations de santé)")
+                            break
                 
                 # Essayer différentes méthodes pour attaquer
                 attack_succeeded = False
@@ -87,17 +160,17 @@ class PokeclickerBotDungeonCombat:
                     except:
                         pass
                 
+                # Méthode 4: Cliquer sur la barre de santé
+                if not attack_succeeded:
+                    try:
+                        health_bar = self.driver.find_element(By.CSS_SELECTOR, ".enemyBar.progress-bar")
+                        self.driver.execute_script("arguments[0].click();", health_bar)
+                        attack_succeeded = True
+                    except:
+                        pass
+                
                 if attack_succeeded:
                     self.clicks += 1
-                    
-                    # Toutes les 10 attaques, vérifier si l'HP a changé
-                    if battle_attempts % 10 == 0:
-                        if current_hp != last_hp:
-                            self.log(f"Combat en cours, HP ennemi: {current_hp}")
-                            last_hp = current_hp
-                            last_check_time = current_time
-                        else:
-                            self.log("HP inchangé, vérification si toujours en combat...")
                 else:
                     self.log("Impossible d'attaquer l'ennemi, vérification de l'état du jeu...")
                     time.sleep(0.5)
@@ -108,6 +181,17 @@ class PokeclickerBotDungeonCombat:
                 if battle_attempts % 50 == 0:
                     battle_duration = int(current_time - battle_start_time)
                     self.log(f"Combat en cours depuis {battle_duration}s, {battle_attempts} attaques effectuées")
+                    
+                    # Si le combat dure vraiment trop longtemps, essayer une approche plus agressive
+                    if battle_duration > 30:
+                        try:
+                            self.log("Combat très long, tentative avancée de clics rapides...")
+                            # Série de clics rapides
+                            for _ in range(10):
+                                self.driver.execute_script("if (typeof DungeonBattle !== 'undefined') { DungeonBattle.clickAttack(); }")
+                                time.sleep(0.05)
+                        except:
+                            pass
                 
                 # Pause courte entre les attaques
                 time.sleep(0.05)
@@ -135,6 +219,16 @@ class PokeclickerBotDungeonCombat:
             
             # Attendre que le coffre soit ouvert
             time.sleep(0.5)
+            
+            # Vérifier si un message de récompense est visible
+            try:
+                reward_text = self.driver.find_element(By.CSS_SELECTOR, ".modal-body")
+                if reward_text:
+                    reward_content = reward_text.text
+                    self.log(f"Récompense obtenue: {reward_content}")
+            except:
+                pass
+                
             return True
             
         except Exception as e:
