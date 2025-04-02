@@ -1,5 +1,6 @@
 import random
 from selenium.webdriver.common.by import By
+import time
 
 class PokeclickerBotDungeonNavigation:
     """
@@ -84,8 +85,14 @@ class PokeclickerBotDungeonNavigation:
                             elif "tile-chest" in class_attribute:
                                 priority = 2  # Priorité haute pour les coffres
                                 adjacent_tiles.append({"cell": cell, "priority": priority, "type": "chest"})
+                            elif "tile-invisible" not in class_attribute and ("tile-empty" in class_attribute or "tile-enemy" in class_attribute):
+                                # Case normale (vide ou ennemi) mais visible - priorité moyenne
+                                priority = 3
+                                type_case = "empty" if "tile-empty" in class_attribute else "enemy"
+                                adjacent_tiles.append({"cell": cell, "priority": priority, "type": type_case})
                             elif "tile-invisible" in class_attribute:
-                                priority = 3  # Priorité pour les cases non découvertes
+                                # Case invisible (non découverte) - priorité basse
+                                priority = 4
                                 adjacent_tiles.append({"cell": cell, "priority": priority, "type": "undiscovered"})
                             
                 except Exception as e:
@@ -166,8 +173,8 @@ class PokeclickerBotDungeonNavigation:
                             cell = cells[new_x]
                             class_attribute = cell.get_attribute("class")
                             
-                            # Si la case adjacente est visitée, on peut l'utiliser comme point d'accès
-                            if "tile-visited" in class_attribute:
+                            # Si la case adjacente est visitée ou si c'est le joueur, on peut l'utiliser comme point d'accès
+                            if "tile-visited" in class_attribute or "tile-player" in class_attribute:
                                 target_info = {
                                     "target": target,
                                     "target_type": target_info["type"],
@@ -207,11 +214,18 @@ class PokeclickerBotDungeonNavigation:
     def find_unvisited_tiles_near_visited(self):
         """Trouver des cases non visitées adjacentes à des cases déjà visitées"""
         try:
-            # Obtenir toutes les cases visitées
-            visited_tiles = self.driver.find_elements(By.CSS_SELECTOR, "td.tile-visited:not(.tile-player)")
+            # Obtenir toutes les cases visitées, y compris la case où se trouve le joueur
+            visited_tiles = self.driver.find_elements(By.CSS_SELECTOR, "td.tile-visited, td.tile-player")
+            
+            # Mélanger les cases visitées pour ne pas favoriser toujours les mêmes chemins
+            visited_tiles_list = list(visited_tiles)
+            random.shuffle(visited_tiles_list)
+            
+            # Liste pour stocker les candidats (cases non visitées et leur case visitée adjacente)
+            candidates = []
             
             # Pour chaque case visitée, vérifier ses voisins
-            for visited_tile in visited_tiles:
+            for visited_tile in visited_tiles_list:
                 # Obtenir les coordonnées de la case visitée
                 visited_tr = visited_tile.find_element(By.XPATH, "./..")
                 tbody = visited_tr.find_element(By.XPATH, "./..")
@@ -229,6 +243,9 @@ class PokeclickerBotDungeonNavigation:
                     (-1, 0)   # gauche
                 ]
                 
+                # Mélanger les directions pour ne pas favoriser toujours la même direction
+                random.shuffle(directions)
+                
                 for dx, dy in directions:
                     new_x = visited_x + dx
                     new_y = visited_y + dy
@@ -242,41 +259,110 @@ class PokeclickerBotDungeonNavigation:
                             cell = cells[new_x]
                             class_attribute = cell.get_attribute("class")
                             
-                            # Si c'est une case invisible (non découverte) ou spéciale
-                            if "tile-invisible" in class_attribute:
-                                return {
-                                    "unvisited": cell,
-                                    "from_visited": visited_tile,
-                                    "unvisited_x": new_x,
-                                    "unvisited_y": new_y,
-                                    "visited_x": visited_x,
-                                    "visited_y": visited_y
-                                }
-                            elif "tile-chest" in class_attribute and "tile-visited" not in class_attribute:
-                                # Coffre non visité
-                                return {
-                                    "unvisited": cell,
-                                    "from_visited": visited_tile,
-                                    "unvisited_x": new_x,
-                                    "unvisited_y": new_y,
-                                    "visited_x": visited_x,
-                                    "visited_y": visited_y,
-                                    "type": "chest"
-                                }
-                            elif "tile-boss" in class_attribute and "tile-visited" not in class_attribute:
-                                # Boss non visité
-                                return {
+                            # Vérifier que ce n'est pas une case déjà visitée
+                            if "tile-visited" in class_attribute or "tile-player" in class_attribute:
+                                continue
+                                
+                            # Définir la priorité en fonction du type de case
+                            priority = 999  # Priorité par défaut (basse)
+                            
+                            if "tile-boss" in class_attribute:
+                                priority = 1  # Priorité la plus haute pour le boss
+                                candidates.append({
                                     "unvisited": cell,
                                     "from_visited": visited_tile,
                                     "unvisited_x": new_x,
                                     "unvisited_y": new_y,
                                     "visited_x": visited_x,
                                     "visited_y": visited_y,
-                                    "type": "boss"
-                                }
+                                    "type": "boss",
+                                    "priority": priority
+                                })
+                            elif "tile-chest" in class_attribute:
+                                priority = 2  # Priorité haute pour les coffres
+                                candidates.append({
+                                    "unvisited": cell,
+                                    "from_visited": visited_tile,
+                                    "unvisited_x": new_x,
+                                    "unvisited_y": new_y,
+                                    "visited_x": visited_x,
+                                    "visited_y": visited_y,
+                                    "type": "chest",
+                                    "priority": priority
+                                })
+                            elif "tile-invisible" not in class_attribute and ("tile-empty" in class_attribute or "tile-enemy" in class_attribute):
+                                # Case normale (vide ou ennemi) mais visible - priorité moyenne
+                                priority = 3
+                                type_case = "empty" if "tile-empty" in class_attribute else "enemy"
+                                candidates.append({
+                                    "unvisited": cell,
+                                    "from_visited": visited_tile,
+                                    "unvisited_x": new_x,
+                                    "unvisited_y": new_y,
+                                    "visited_x": visited_x,
+                                    "visited_y": visited_y,
+                                    "type": type_case,
+                                    "priority": priority
+                                })
+                            elif "tile-invisible" in class_attribute:
+                                # Case invisible (non découverte) - priorité basse
+                                priority = 4
+                                candidates.append({
+                                    "unvisited": cell,
+                                    "from_visited": visited_tile,
+                                    "unvisited_x": new_x,
+                                    "unvisited_y": new_y,
+                                    "visited_x": visited_x,
+                                    "visited_y": visited_y,
+                                    "type": "undiscovered",
+                                    "priority": priority
+                                })
+            
+            # Si nous avons trouvé des candidats, trier par priorité et retourner le meilleur
+            if candidates:
+                candidates.sort(key=lambda x: x["priority"])
+                best_candidate = candidates[0]
+                
+                # Vérifier si le joueur est déjà sur la case visitée adjacente à la cible
+                player_pos = self.find_player_position()
+                if player_pos:
+                    player_x, player_y = player_pos
+                    
+                    # Si la case visitée à partir de laquelle on doit accéder à la case non visitée
+                    # est différente de la position actuelle du joueur, s'assurer que la case est cliquable
+                    if player_x != best_candidate["visited_x"] or player_y != best_candidate["visited_y"]:
+                        # Vérifier si cette case est directement cliquable depuis la position actuelle
+                        # Si non, on va essayer de trouver une autre case plus appropriée
+                        direct_access = False
+                        for candidate in candidates:
+                            if candidate["visited_x"] == player_x and candidate["visited_y"] == player_y:
+                                best_candidate = candidate
+                                direct_access = True
+                                break
+                        
+                        if not direct_access:
+                            # Essayer de trouver une case visitée adjacente à notre position actuelle
+                            for candidate in candidates:
+                                if abs(candidate["visited_x"] - player_x) + abs(candidate["visited_y"] - player_y) == 1:
+                                    best_candidate = candidate
+                                    break
+                
+                return best_candidate
             
             return None  # Aucune case non visitée adjacente à une case visitée
             
         except Exception as e:
             self.log(f"Erreur lors de la recherche de cases non visitées: {str(e)}")
             return None
+            
+    def move_to_specific_position(self, x, y):
+        """Déplacer le joueur vers une position spécifique en utilisant directement l'API JavaScript du jeu"""
+        try:
+            # Utiliser l'API JavaScript de PokéClicker pour se déplacer
+            self.driver.execute_script(f"DungeonRunner.map.moveToCoordinates({x}, {y});")
+            self.log(f"Déplacement direct vers la position ({x}, {y}) via JavaScript")
+            time.sleep(0.2)  # Pause courte pour laisser le jeu réagir
+            return True
+        except Exception as e:
+            self.log(f"Erreur lors du déplacement direct: {str(e)}")
+            return False
