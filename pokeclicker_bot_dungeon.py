@@ -594,3 +594,60 @@ class PokeclickerBotDungeon(PokeclickerBotDungeonBase, PokeclickerBotDungeonNavi
             self.log("Tentative de sortie du donjon après échec")
         except Exception as e:
             self.log(f"Erreur lors de la sortie du donjon: {str(e)}")
+    def force_exploration_with_javascript(self):
+        """
+        Force l'exploration en utilisant directement l'API JavaScript du jeu
+        Utile pour surmonter les situations de blocage
+        """
+        try:
+            # Obtenir la position actuelle du joueur
+            self.log("Tentative d'exploration forcée via JavaScript...")
+            
+            # Utiliser l'API JavaScript pour explorer dans plusieurs directions
+            self.driver.execute_script("""
+                if (typeof DungeonRunner !== 'undefined' && DungeonRunner.map) {
+                    // Obtenir la position actuelle du joueur
+                    var pos = DungeonRunner.map.playerPosition();
+                    if (!pos) return;
+                    
+                    // Définir les directions
+                    var directions = [[0,-1], [1,0], [0,1], [-1,0]];
+                    
+                    // Essayer chaque direction
+                    for (var i = 0; i < directions.length; i++) {
+                        try {
+                            // Calculer les nouvelles coordonnées
+                            var newX = pos.x + directions[i][0];
+                            var newY = pos.y + directions[i][1];
+                            
+                            // Tenter de se déplacer vers ces coordonnées
+                            DungeonRunner.map.moveToCoordinates(newX, newY);
+                            
+                            // Si on arrive ici, le mouvement a réussi
+                            break;
+                        } catch(e) {
+                            // Ignorer les erreurs et essayer la direction suivante
+                            continue;
+                        }
+                    }
+                    
+                    // Si aucun mouvement n'a réussi, tenter d'explorer des cases plus éloignées
+                    if (i >= directions.length) {
+                        for (var i = 0; i < directions.length; i++) {
+                            try {
+                                var newX = pos.x + directions[i][0] * 2;
+                                var newY = pos.y + directions[i][1] * 2;
+                                DungeonRunner.map.moveToCoordinates(newX, newY);
+                                break;
+                            } catch(e) {
+                                continue;
+                            }
+                        }
+                    }
+                }
+            """)
+            self.log("Exploration forcée via JavaScript terminée")
+            return True
+        except Exception as e:
+            self.log(f"Erreur lors de l'exploration forcée via JavaScript: {str(e)}")
+            return False

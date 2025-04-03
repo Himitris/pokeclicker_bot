@@ -734,6 +734,7 @@ class PokeclickerBotDungeonPathfinding:
             }
         
         return None
+    
     def find_efficient_exploration_move(self, dungeon_map):
         """
         Trouve le meilleur mouvement pour l'exploration initiale
@@ -865,7 +866,7 @@ class PokeclickerBotDungeonPathfinding:
             target_x, target_y = best_option["target_x"], best_option["target_y"]
             
             self.log(f"Meilleure option d'exploration: case ({target_x}, {target_y}) "
-                     f"depuis ({visited_x}, {visited_y}), score: {best_option['exploration_score']}")
+                    f"depuis ({visited_x}, {visited_y}), score: {best_option['exploration_score']}")
             
             # Si le joueur est déjà sur la case visitée, cliquer directement sur la cible
             if (visited_x, visited_y) == (player_x, player_y):
@@ -928,180 +929,183 @@ class PokeclickerBotDungeonPathfinding:
         
         # En dernier recours, utiliser l'API JavaScript pour explorer
         self.log("Aucun mouvement viable trouvé, utilisation de l'exploration JavaScript forcée")
-        return None    
-        
-def find_strategic_chest_path(self, dungeon_map):
-    """
-    Trouve le chemin vers le coffre le plus stratégique (pas forcément le plus proche)
-    Considère la position des autres coffres et l'état d'exploration du donjon
-    """
-    if not dungeon_map["chests"]:
         return None
-        
-    player_x, player_y = dungeon_map["player_pos"]
     
-    # Calculer l'intérêt stratégique de chaque coffre
-    strategic_chests = []
-    
-    for chest_x, chest_y in dungeon_map["chests"]:
-        # Distance du joueur au coffre
-        distance = abs(chest_x - player_x) + abs(chest_y - player_y)
+    def find_strategic_chest_path(self, dungeon_map):
+        """
+        Trouve le chemin vers le coffre le plus stratégique (pas forcément le plus proche)
+        Considère la position des autres coffres et l'état d'exploration du donjon
+        """
+        if not dungeon_map["chests"]:
+            return None
+            
+        player_x, player_y = dungeon_map["player_pos"]
         
-        # Nombre de cases inexplorées autour du coffre (potentiel de révélation)
-        unexplored_around = self.count_unexplored_around(chest_x, chest_y, dungeon_map)
+        # Calculer l'intérêt stratégique de chaque coffre
+        strategic_chests = []
         
-        # Distance aux autres coffres (préférer les coffres isolés)
-        min_distance_to_other_chests = float('inf')
-        for other_x, other_y in dungeon_map["chests"]:
-            if (other_x, other_y) != (chest_x, chest_y):
-                dist = abs(other_x - chest_x) + abs(other_y - chest_y)
-                min_distance_to_other_chests = min(min_distance_to_other_chests, dist)
+        for chest_x, chest_y in dungeon_map["chests"]:
+            # Distance du joueur au coffre
+            distance = abs(chest_x - player_x) + abs(chest_y - player_y)
+            
+            # Nombre de cases inexplorées autour du coffre (potentiel de révélation)
+            unexplored_around = self.count_unexplored_around(chest_x, chest_y, dungeon_map)
+            
+            # Distance aux autres coffres (préférer les coffres isolés)
+            min_distance_to_other_chests = float('inf')
+            for other_x, other_y in dungeon_map["chests"]:
+                if (other_x, other_y) != (chest_x, chest_y):
+                    dist = abs(other_x - chest_x) + abs(other_y - chest_y)
+                    min_distance_to_other_chests = min(min_distance_to_other_chests, dist)
+            
+            if min_distance_to_other_chests == float('inf'):
+                min_distance_to_other_chests = 0
+            
+            # Calculer le score stratégique (plus il est bas, mieux c'est)
+            # Formule: distance au joueur - (potentiel de révélation + distance aux autres coffres)
+            strategic_score = distance - (unexplored_around * 2 + min_distance_to_other_chests)
+            
+            # Vérifier si ce coffre est directement accessible depuis la position actuelle
+            direct_access = self.is_directly_accessible(player_x, player_y, chest_x, chest_y, dungeon_map)
+            
+            # Vérifier s'il est accessible depuis une case visitée
+            access_points = self.find_all_access_points(chest_x, chest_y, dungeon_map)
+            
+            strategic_chests.append({
+                "x": chest_x,
+                "y": chest_y,
+                "distance": distance,
+                "unexplored_around": unexplored_around,
+                "min_distance_to_other_chests": min_distance_to_other_chests,
+                "strategic_score": strategic_score,
+                "direct_access": direct_access,
+                "access_points": access_points
+            })
         
-        if min_distance_to_other_chests == float('inf'):
-            min_distance_to_other_chests = 0
+        # Trier les coffres par score stratégique (ascendant)
+        strategic_chests.sort(key=lambda c: c["strategic_score"])
         
-        # Calculer le score stratégique (plus il est bas, mieux c'est)
-        # Formule: distance au joueur - (potentiel de révélation + distance aux autres coffres)
-        strategic_score = distance - (unexplored_around * 2 + min_distance_to_other_chests)
+        # Prendre les 3 meilleurs coffres et choisir celui avec le meilleur accès
+        best_chests = strategic_chests[:3] if len(strategic_chests) >= 3 else strategic_chests
         
-        # Vérifier si ce coffre est directement accessible depuis la position actuelle
-        direct_access = self.is_directly_accessible(player_x, player_y, chest_x, chest_y, dungeon_map)
+        # Trier ces meilleurs coffres par facilité d'accès
+        for chest in best_chests:
+            # Priorité d'accès (plus c'est bas, mieux c'est)
+            access_priority = 999
+            
+            if chest["direct_access"]:
+                access_priority = 1  # Accès direct depuis la position actuelle
+            elif chest["access_points"]:
+                # Vérifier si un des points d'accès est directement accessible
+                for ax, ay in chest["access_points"]:
+                    if (ax, ay) == (player_x, player_y):
+                        access_priority = 2  # Le joueur est déjà sur un point d'accès
+                        break
+                    elif self.is_directly_accessible(player_x, player_y, ax, ay, dungeon_map):
+                        access_priority = 3  # Point d'accès directement accessible
+                        break
+                
+                if access_priority == 999:
+                    access_priority = 4  # Points d'accès mais pas directement accessibles
+            
+            chest["access_priority"] = access_priority
         
-        # Vérifier s'il est accessible depuis une case visitée
-        access_points = self.find_all_access_points(chest_x, chest_y, dungeon_map)
+        # Trier d'abord par facilité d'accès, puis par score stratégique
+        best_chests.sort(key=lambda c: (c["access_priority"], c["strategic_score"]))
         
-        strategic_chests.append({
-            "x": chest_x,
-            "y": chest_y,
-            "distance": distance,
-            "unexplored_around": unexplored_around,
-            "min_distance_to_other_chests": min_distance_to_other_chests,
-            "strategic_score": strategic_score,
-            "direct_access": direct_access,
-            "access_points": access_points
-        })
-    
-    # Trier les coffres par score stratégique (ascendant)
-    strategic_chests.sort(key=lambda c: c["strategic_score"])
-    
-    # Prendre les 3 meilleurs coffres et choisir celui avec le meilleur accès
-    best_chests = strategic_chests[:3] if len(strategic_chests) >= 3 else strategic_chests
-    
-    # Trier ces meilleurs coffres par facilité d'accès
-    for chest in best_chests:
-        # Priorité d'accès (plus c'est bas, mieux c'est)
-        access_priority = 999
+        # Prendre le meilleur coffre après tous ces critères
+        if not best_chests:
+            return None
+            
+        best_chest = best_chests[0]
+        chest_x, chest_y = best_chest["x"], best_chest["y"]
         
-        if chest["direct_access"]:
-            access_priority = 1  # Accès direct depuis la position actuelle
-        elif chest["access_points"]:
-            # Vérifier si un des points d'accès est directement accessible
-            for ax, ay in chest["access_points"]:
+        self.log(f"Coffre le plus stratégique en ({chest_x}, {chest_y}) " 
+                f"(score: {best_chest['strategic_score']}, accès: {best_chest['access_priority']})")
+        
+        # Construire la réponse en fonction du meilleur accès à ce coffre
+        
+        # 1. Accès direct depuis la position actuelle
+        if best_chest["direct_access"]:
+            return {
+                "element": dungeon_map["rows"][chest_y][chest_x]["element"],
+                "type": "strategic_chest_direct",
+                "direct": True
+            }
+        
+        # 2. Accès depuis un point d'accès
+        if best_chest["access_points"]:
+            # Trouver le meilleur point d'accès
+            best_access = None
+            best_access_priority = 999
+            
+            for ax, ay in best_chest["access_points"]:
+                priority = 999
+                
                 if (ax, ay) == (player_x, player_y):
-                    access_priority = 2  # Le joueur est déjà sur un point d'accès
+                    priority = 1  # Le joueur est déjà sur ce point d'accès
+                    best_access = (ax, ay)
+                    best_access_priority = priority
                     break
                 elif self.is_directly_accessible(player_x, player_y, ax, ay, dungeon_map):
-                    access_priority = 3  # Point d'accès directement accessible
-                    break
+                    priority = 2  # Point d'accès directement accessible
+                else:
+                    priority = 3 + abs(player_x - ax) + abs(player_y - ay)  # Distance au point d'accès
+                
+                if priority < best_access_priority:
+                    best_access = (ax, ay)
+                    best_access_priority = priority
             
-            if access_priority == 999:
-                access_priority = 4  # Points d'accès mais pas directement accessibles
-        
-        chest["access_priority"] = access_priority
-    
-    # Trier d'abord par facilité d'accès, puis par score stratégique
-    best_chests.sort(key=lambda c: (c["access_priority"], c["strategic_score"]))
-    
-    # Prendre le meilleur coffre après tous ces critères
-    best_chest = best_chests[0]
-    chest_x, chest_y = best_chest["x"], best_chest["y"]
-    
-    self.log(f"Coffre le plus stratégique en ({chest_x}, {chest_y}) " 
-            f"(score: {best_chest['strategic_score']}, accès: {best_chest['access_priority']})")
-    
-    # Construire la réponse en fonction du meilleur accès à ce coffre
-    
-    # 1. Accès direct depuis la position actuelle
-    if best_chest["direct_access"]:
-        return {
-            "element": dungeon_map["rows"][chest_y][chest_x]["element"],
-            "type": "strategic_chest_direct",
-            "direct": True
-        }
-    
-    # 2. Accès depuis un point d'accès
-    if best_chest["access_points"]:
-        # Trouver le meilleur point d'accès
-        best_access = None
-        best_access_priority = 999
-        
-        for ax, ay in best_chest["access_points"]:
-            priority = 999
-            
-            if (ax, ay) == (player_x, player_y):
-                priority = 1  # Le joueur est déjà sur ce point d'accès
-                best_access = (ax, ay)
-                best_access_priority = priority
-                break
-            elif self.is_directly_accessible(player_x, player_y, ax, ay, dungeon_map):
-                priority = 2  # Point d'accès directement accessible
-            else:
-                priority = 3 + abs(player_x - ax) + abs(player_y - ay)  # Distance au point d'accès
-            
-            if priority < best_access_priority:
-                best_access = (ax, ay)
-                best_access_priority = priority
-        
-        if best_access:
-            ax, ay = best_access
-            
-            # Si nous sommes déjà sur ce point d'accès
-            if (ax, ay) == (player_x, player_y):
-                return {
-                    "element": dungeon_map["rows"][chest_y][chest_x]["element"],
-                    "type": "strategic_chest_from_current",
-                    "direct": True
-                }
-            
-            # Si le point d'accès est directement accessible
-            if self.is_directly_accessible(player_x, player_y, ax, ay, dungeon_map):
-                return {
-                    "element": dungeon_map["rows"][ay][ax]["element"],
-                    "type": "move_to_chest_access_direct",
-                    "direct": True,
-                    "next_target": {
+            if best_access:
+                ax, ay = best_access
+                
+                # Si nous sommes déjà sur ce point d'accès
+                if (ax, ay) == (player_x, player_y):
+                    return {
                         "element": dungeon_map["rows"][chest_y][chest_x]["element"],
-                        "x": chest_x,
-                        "y": chest_y
+                        "type": "strategic_chest_from_current",
+                        "direct": True
                     }
-                }
-            
-            # Si le point d'accès n'est pas directement accessible,
-            # trouver le meilleur chemin vers ce point via des cases visitées
-            path_to_access = self.find_best_path_avoiding_enemies(player_x, player_y, ax, ay, dungeon_map)
-            if path_to_access:
-                next_x, next_y = path_to_access[0]
-                return {
-                    "element": dungeon_map["rows"][next_y][next_x]["element"],
-                    "type": "path_to_chest_access",
-                    "direct": False,
-                    "path": path_to_access,
-                    "final_target": {
-                        "element": dungeon_map["rows"][chest_y][chest_x]["element"],
-                        "x": chest_x,
-                        "y": chest_y
+                
+                # Si le point d'accès est directement accessible
+                if self.is_directly_accessible(player_x, player_y, ax, ay, dungeon_map):
+                    return {
+                        "element": dungeon_map["rows"][ay][ax]["element"],
+                        "type": "move_to_chest_access_direct",
+                        "direct": True,
+                        "next_target": {
+                            "element": dungeon_map["rows"][chest_y][chest_x]["element"],
+                            "x": chest_x,
+                            "y": chest_y
+                        }
                     }
-                }
-    
-    # 3. En dernier recours, trouver un chemin complet
-    path = self.find_best_path_avoiding_enemies(player_x, player_y, chest_x, chest_y, dungeon_map)
-    if path:
-        next_x, next_y = path[0]
-        return {
-            "element": dungeon_map["rows"][next_y][next_x]["element"],
-            "type": "complete_path_to_chest",
-            "path": path,
-            "direct": False
-        }
-    
-    return None
+                
+                # Si le point d'accès n'est pas directement accessible,
+                # trouver le meilleur chemin vers ce point via des cases visitées
+                path_to_access = self.find_best_path_avoiding_enemies(player_x, player_y, ax, ay, dungeon_map)
+                if path_to_access:
+                    next_x, next_y = path_to_access[0]
+                    return {
+                        "element": dungeon_map["rows"][next_y][next_x]["element"],
+                        "type": "path_to_chest_access",
+                        "direct": False,
+                        "path": path_to_access,
+                        "final_target": {
+                            "element": dungeon_map["rows"][chest_y][chest_x]["element"],
+                            "x": chest_x,
+                            "y": chest_y
+                        }
+                    }
+        
+        # 3. En dernier recours, trouver un chemin complet
+        path = self.find_best_path_avoiding_enemies(player_x, player_y, chest_x, chest_y, dungeon_map)
+        if path:
+            next_x, next_y = path[0]
+            return {
+                "element": dungeon_map["rows"][next_y][next_x]["element"],
+                "type": "complete_path_to_chest",
+                "path": path,
+                "direct": False
+            }
+        
+        return None
