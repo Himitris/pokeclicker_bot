@@ -36,16 +36,20 @@ class PokeclickerBotDungeonBase:
     def check_game_state(self):
         """Vérifier l'état actuel du jeu pour déterminer l'action à prendre"""
         try:
+            # Vérifier d'abord si le boss est visible
+            boss_visible = self.has_boss_button()
+            
             # Vérifier si nous sommes en combat
             if self.is_in_battle():
                 return "battle"
             
-            # Vérifier si un coffre est visible
-            if self.is_chest_visible():
+            # OPTIMISATION: Si le boss est visible, ignorer les coffres
+            # Vérifier si un coffre est visible mais seulement si le boss n'est pas encore visible
+            if not boss_visible and self.is_chest_visible():
                 return "chest"
             
             # Vérifier si le bouton du boss est visible
-            if self.has_boss_button():
+            if boss_visible:
                 return "boss"
             
             # Vérifier si nous sommes dans un donjon mais pas dans un état spécial
@@ -55,7 +59,7 @@ class PokeclickerBotDungeonBase:
             # Si nous ne sommes pas dans un donjon, le donjon pourrait être terminé ou fermé
             self.log("État de jeu indéterminé - vérifier si le donjon est terminé")
             return "unknown"
-        
+    
         except Exception as e:
             self.log(f"Erreur lors de la vérification de l'état du jeu: {str(e)}")
             return "error"

@@ -583,13 +583,14 @@ class PokeclickerBotDungeonPathfinding:
             exploration_phase = self.determine_exploration_phase(dungeon_map)
             
             # PRIORITÉ 1: Si le boss est visible, trouver le chemin optimal vers lui en évitant les ennemis
+            # et en ignorant tous les coffres
             if exploration_phase == "boss_visible":
-                self.log("Phase Boss: Recherche du chemin optimal vers le boss en évitant les ennemis")
+                self.log("Boss découvert! Ignorer les coffres et se diriger directement vers le boss")
                 return self.find_optimal_path_to_boss(dungeon_map)
             
-            # PRIORITÉ 2: Si des coffres sont visibles, trouver le chemin vers le coffre le plus intéressant
+            # PRIORITÉ 2: Si des coffres sont visibles mais pas le boss, chercher le coffre le plus stratégique
             elif exploration_phase == "chests_visible":
-                self.log("Phase Coffres: Recherche du coffre le plus stratégique")
+                self.log("Phase Coffres: Recherche du coffre le plus stratégique pour révéler le boss")
                 return self.find_strategic_chest_path(dungeon_map)
             
             # PRIORITÉ 3: Phase initiale, explorer efficacement les cases adjacentes non visitées
@@ -614,6 +615,61 @@ class PokeclickerBotDungeonPathfinding:
         
         self.log(f"Boss détecté en ({boss_x}, {boss_y}), calcul du chemin optimal...")
         
+        # AMÉLIORATION: Vérifier d'abord si on peut cliquer directement sur le boss depuis 
+        # n'importe quelle case déjà visitée
+        # Cela permet de court-circuiter tout le calcul de chemin si une case visitée
+        # est adjacente au boss
+        direct_access_from = None
+        for visited_x, visited_y in dungeon_map["visited_tiles"]:
+            if self.is_directly_accessible(visited_x, visited_y, boss_x, boss_y, dungeon_map):
+                direct_access_from = (visited_x, visited_y)
+                # Si le joueur est déjà sur cette case, c'est la solution optimale
+                if (visited_x, visited_y) == (player_x, player_y):
+                    self.log(f"Boss directement accessible depuis la position actuelle! Clic direct.")
+                    return {
+                        "element": dungeon_map["rows"][boss_y][boss_x]["element"],
+                        "type": "boss_direct",
+                        "direct": True
+                    }
+        
+        # Si on a trouvé une case visitée qui permet d'accéder directement au boss,
+        # déplaçons-nous vers cette case d'abord
+        if direct_access_from:
+            access_x, access_y = direct_access_from
+            self.log(f"Boss accessible directement depuis la case ({access_x}, {access_y}). Optimisation du parcours.")
+            
+            # Si cette case est adjacente au joueur, on peut s'y déplacer directement
+            if self.is_directly_accessible(player_x, player_y, access_x, access_y, dungeon_map):
+                self.log(f"Déplacement direct vers la case d'accès, puis clic sur le boss")
+                return {
+                    "element": dungeon_map["rows"][access_y][access_x]["element"],
+                    "type": "move_to_direct_boss_access",
+                    "direct": True,
+                    "next_target": {
+                        "element": dungeon_map["rows"][boss_y][boss_x]["element"],
+                        "x": boss_x,
+                        "y": boss_y
+                    }
+                }
+            # Sinon, il faut trouver un chemin vers cette case visitée
+            else:
+                path_to_access = self.find_best_path_through_visited(player_x, player_y, access_x, access_y, dungeon_map)
+                if path_to_access:
+                    next_x, next_y = path_to_access[0]
+                    self.log(f"Optimisation du chemin vers le point d'accès direct au boss")
+                    return {
+                        "element": dungeon_map["rows"][next_y][next_x]["element"],
+                        "type": "path_to_direct_boss_access",
+                        "direct": False,
+                        "path": path_to_access,
+                        "final_target": {
+                            "element": dungeon_map["rows"][boss_y][boss_x]["element"],
+                            "x": boss_x,
+                            "y": boss_y
+                        }
+                    }
+        
+        # Si pas d'accès direct possible, on revient à l'algorithme original
         # 1. Vérifier si le boss est directement accessible depuis la position actuelle
         if self.is_directly_accessible(player_x, player_y, boss_x, boss_y, dungeon_map):
             self.log(f"Boss directement accessible depuis la position actuelle! Clic direct.")
@@ -971,19 +1027,40 @@ class PokeclickerBotDungeonPathfinding:
             # Vérifier s'il est accessible depuis une case visitée
             access_points = self.find_all_access_points(chest_x, chest_y, dungeon_map)
             
-            strategic_chests.append({
-                "x": chest_x,
-                "y": chest_y,
-                "distance": distance,
-                "unexplored_around": unexplored_around,
-                "min_distance_to_other_chests": min_distance_to_other_chests,
-                "strategic_score": strategic_score,
-                "direct_access": direct_access,
-                "access_points": access_points
-            })
+            # Vérifier si un chemin est possible vers ce coffre
+            # MODIFICATION: vérifier la possibilité d'accès avant d'ajouter le coffre à la liste
+            has_possible_path = False
+            
+            if direct_access:
+                has_possible_path = True
+            elif access_points:
+                has_possible_path = True
+            else:
+                # Tester si un chemin existe vers ce coffre
+                test_path = self.find_best_path(player_x, player_y, chest_x, chest_y, dungeon_map, ignore_enemies=True)
+                has_possible_path = (test_path is not None)
+            
+            # N'ajouter que les coffres accessibles
+            if has_possible_path:
+                strategic_chests.append({
+                    "x": chest_x,
+                    "y": chest_y,
+                    "distance": distance,
+                    "unexplored_around": unexplored_around,
+                    "min_distance_to_other_chests": min_distance_to_other_chests,
+                    "strategic_score": strategic_score,
+                    "direct_access": direct_access,
+                    "access_points": access_points
+                })
+        
+        # Si aucun coffre n'est accessible, essayer d'explorer pour révéler de nouvelles zones
+        if not strategic_chests:
+            self.log("Aucun coffre accessible trouvé, passage en mode exploration pour révéler de nouvelles zones")
+            return self.find_efficient_exploration_move(dungeon_map)
         
         # Trier les coffres par score stratégique (ascendant)
         strategic_chests.sort(key=lambda c: c["strategic_score"])
+    
         
         # Prendre les 3 meilleurs coffres et choisir celui avec le meilleur accès
         best_chests = strategic_chests[:3] if len(strategic_chests) >= 3 else strategic_chests

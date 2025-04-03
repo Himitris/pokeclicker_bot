@@ -77,6 +77,8 @@ class PokeclickerBotDungeon(PokeclickerBotDungeonBase, PokeclickerBotDungeonNavi
             time_since_new_tile = time.time()
             consecutive_failures = 0
             last_map_hash = ""
+            empty_tile_pause = 0.05  # Pause très courte pour cases vides
+            normal_pause = 0.1 # Pause standard pour autres actions
             
             # Statistiques d'exploration
             stats = {
@@ -162,6 +164,12 @@ class PokeclickerBotDungeon(PokeclickerBotDungeonBase, PokeclickerBotDungeonNavi
                         stuck_counter = 0
                         last_action_time = current_time
                         time_since_new_tile = current_time
+
+                # Ajouter une vérification explicite pour les coffres ignorés
+                if dungeon_map and dungeon_map["boss_pos"] and current_state == "chest":
+                    self.log("⏭️ Coffre ignoré car le boss est déjà découvert, se diriger directement vers le boss")
+                    # Forcer l'état "exploring" pour ignorer le coffre et continuer l'exploration
+                    current_state = "exploring"
                 
                 # Traiter l'état actuel avec des stratégies optimisées pour chaque état
                 if current_state == "battle":
@@ -205,6 +213,23 @@ class PokeclickerBotDungeon(PokeclickerBotDungeonBase, PokeclickerBotDungeonNavi
                     next_move = None
                     
                     if dungeon_map:
+                        # si disponible dans les mouvements précédents
+                        if hasattr(self, 'cached_final_target') and self.cached_final_target:
+                            target = self.cached_final_target
+                            current_state = self.check_game_state()
+                            if current_state == "exploring":  # Seulement si nous sommes toujours en exploration
+                                self.log(f"Tentative de saut direct vers la cible finale: ({target['x']}, {target['y']})")
+                                self.driver.execute_script("arguments[0].click();", target["element"])
+                                # Réinitialiser après utilisation
+                                self.cached_final_target = None
+                                # Court délai pour voir si ça a fonctionné
+                                time.sleep(0.2)
+                                new_state = self.check_game_state()
+                                if new_state != "exploring":
+                                    self.log(f"Saut direct réussi! Nouvel état: {new_state}")
+                                    last_action_time = current_time
+                                    last_state = new_state
+                                    continue  # Passer à l'itération suivante
                         # Adapter la stratégie selon la phase d'exploration
                         if exploration_phase == "boss_visible":
                             self.log("Phase Boss: Optimisation du chemin vers le boss")
@@ -224,6 +249,10 @@ class PokeclickerBotDungeon(PokeclickerBotDungeonBase, PokeclickerBotDungeonNavi
                         # Exécuter le mouvement
                         move_type = next_move.get("type", "unknown")
                         self.log(f"Mouvement optimisé: {move_type}")
+
+                        if "final_target" in next_move:
+                            self.cached_final_target = next_move["final_target"]
+                            self.log(f"Cible finale mémorisée: ({next_move['final_target']['x']}, {next_move['final_target']['y']})")
                         
                         # Si le mouvement est direct, cliquer directement sur l'élément
                         if next_move.get("direct", False):
@@ -251,9 +280,9 @@ class PokeclickerBotDungeon(PokeclickerBotDungeonBase, PokeclickerBotDungeonNavi
                         # Attendre un court instant pour laisser le jeu réagir
                         # Ajuster le temps d'attente selon le type de mouvement
                         if "empty" in move_type or "visited" in move_type:
-                            time.sleep(0.1)  # Court pour les cases simples
+                            time.sleep(empty_tile_pause)  # Très court pour cases simples
                         else:
-                            time.sleep(0.3)  # Plus long pour les actions importantes
+                            time.sleep(normal_pause)
                         
                         # Vérifier si l'état a changé
                         new_state = self.check_game_state()
@@ -569,31 +598,48 @@ class PokeclickerBotDungeon(PokeclickerBotDungeonBase, PokeclickerBotDungeonNavi
     def exit_dungeon_after_failure(self):
         """Tenter de sortir proprement d'un donjon après un échec"""
         try:
-            # Fermer tous les dialogues possibles
-            close_buttons = self.driver.find_elements(By.CSS_SELECTOR, ".modal button.close, .modal .btn-primary")
-            if close_buttons:
-                for button in close_buttons:
-                    self.driver.execute_script("arguments[0].click();", button)
+            # Attendre un peu avant de tenter de fermer les dialogues
+            time.sleep(1)
             
-            # Tentative de forfait si on est bloqué en combat
-            self.driver.execute_script("""
-                if (typeof DungeonBattle !== 'undefined') {
-                    try {
-                        DungeonBattle.forfeit();
-                    } catch(e) {}
-                }
-                
-                // Essai de retour à l'écran principal
-                if (typeof DungeonRunner !== 'undefined') {
-                    try {
-                        DungeonRunner.dungeonFinished();
-                    } catch(e) {}
-                }
-            """)
+            # Fermer tous les dialogues possibles (avec gestion des erreurs pour chaque étape)
+            try:
+                close_buttons = self.driver.find_elements(By.CSS_SELECTOR, ".modal button.close, .modal .btn-primary")
+                if close_buttons:
+                    for button in close_buttons:
+                        try:
+                            self.driver.execute_script("arguments[0].click();", button)
+                            time.sleep(0.3)  # Attente entre les clics
+                        except:
+                            pass  # Ignorer les erreurs individuelles de clic
+            except:
+                self.log("Erreur lors de la fermeture des dialogues")
+            
+            # Tentative de forfait via JavaScript
+            try:
+                self.driver.execute_script("""
+                    if (typeof DungeonBattle !== 'undefined') {
+                        try {
+                            DungeonBattle.forfeit();
+                        } catch(e) {}
+                    }
+                    
+                    // Essai de retour à l'écran principal
+                    if (typeof DungeonRunner !== 'undefined') {
+                        try {
+                            DungeonRunner.dungeonFinished();
+                        } catch(e) {}
+                    }
+                """)
+            except:
+                self.log("Erreur lors de l'exécution du JavaScript de sortie")
             
             self.log("Tentative de sortie du donjon après échec")
+            
+            # Attendre un moment pour que les actions JavaScript prennent effet
+            time.sleep(2)
         except Exception as e:
-            self.log(f"Erreur lors de la sortie du donjon: {str(e)}")
+            self.log(f"Erreur générale lors de la sortie du donjon: {str(e)}")
+
     def force_exploration_with_javascript(self):
         """
         Force l'exploration en utilisant directement l'API JavaScript du jeu

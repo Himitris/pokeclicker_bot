@@ -182,16 +182,27 @@ class PokeclickerApp(ctk.CTk):
         self.dungeon_count_label = ctk.CTkLabel(self.dungeon_config_frame, text="Nombre de donjons à compléter:")
         self.dungeon_count_label.grid(row=0, column=0, padx=(20, 10), pady=10, sticky="w")
         
-        self.dungeon_count_var = ctk.IntVar(value=5)
+        # Modification ici: ajout d'une fonction pour valider la saisie
+        def validate_dungeon_count(new_value):
+            if new_value == "":
+                return True  # Permettre un champ vide
+            try:
+                int(new_value)
+                return True
+            except ValueError:
+                return False
+        
+        # Initialiser avec un StringVar au lieu d'un IntVar pour gérer le cas vide
+        self.dungeon_count_var = ctk.StringVar(value="5")
         self.dungeon_count_entry = ctk.CTkEntry(self.dungeon_config_frame, width=100, textvariable=self.dungeon_count_var)
         self.dungeon_count_entry.grid(row=0, column=1, padx=10, pady=10, sticky="w")
         
         # Option pour un nombre illimité de donjons
         self.dungeon_unlimited_var = ctk.BooleanVar(value=False)
         self.dungeon_unlimited_checkbox = ctk.CTkCheckBox(self.dungeon_config_frame, 
-                                                      text="Mode illimité", 
-                                                      variable=self.dungeon_unlimited_var,
-                                                      command=self.toggle_dungeon_count)
+                                                    text="Mode illimité", 
+                                                    variable=self.dungeon_unlimited_var,
+                                                    command=self.toggle_dungeon_count)
         self.dungeon_unlimited_checkbox.grid(row=0, column=2, padx=10, pady=10, sticky="w")
         
         # Description
@@ -295,7 +306,14 @@ class PokeclickerApp(ctk.CTk):
     def start_dungeon_automation(self):
         """Démarrer l'automatisation des donjons"""
         # Déterminer le nombre de donjons à exécuter
-        dungeons_to_run = 0 if self.dungeon_unlimited_var.get() else self.dungeon_count_var.get()
+        if self.dungeon_unlimited_var.get():
+            dungeons_to_run = 0  # Mode illimité
+        else:
+            # Récupérer et valider la valeur
+            try:
+                dungeons_to_run = int(self.dungeon_count_var.get() or "0")
+            except ValueError:
+                dungeons_to_run = 0
         
         # Vérification des entrées
         if not self.dungeon_unlimited_var.get() and dungeons_to_run <= 0:
@@ -312,7 +330,7 @@ class PokeclickerApp(ctk.CTk):
                 self.dungeon_progress_label.configure(text=f"Progression: 0/{dungeons_to_run}")
             else:
                 self.dungeon_progress_label.configure(text="Progression: Mode illimité")
-    
+                
     def stop_dungeon_automation(self):
         """Arrêter l'automatisation des donjons"""
         self.bot.stop_dungeon_automation()

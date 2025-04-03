@@ -42,18 +42,18 @@ class PokeclickerBotDungeonCombat:
             # self.log(f"Erreur lors de la lecture des informations de santé: {str(e)}")
             return None
     
-    def handle_battle(self):
+    def handle_battle(self, is_boss=False):
         """Gérer un combat en cliquant sur l'ennemi avec vérification d'efficacité et une stratégie adaptative"""
         try:
-            self.log("Combat détecté, attaque en cours...")
+            battle_type = "boss" if is_boss else "standard"
+            self.log(f"Combat {battle_type} détecté, attaque en cours...")
             battle_start_time = time.time()
-            battle_attempts = 0
-            max_attempts = 150  # Maximum d'essais pour éviter les blocages
+            battle_attempts = 0            
             last_check_time = time.time()
             last_health_info = None
             stuck_counter = 0
             consecutive_errors = 0
-            attack_interval = 0.05  # Intervalle initial entre les attaques (50ms)
+            attack_interval = 0.01 # Intervalle initial entre les attaques (1ms)
             
             # Obtenir les infos initiales sur la santé pour déterminer la difficulté du combat
             initial_health_info = self.get_enemy_health_info()
@@ -65,11 +65,41 @@ class PokeclickerBotDungeonCombat:
                     # Réduire l'intervalle pour les combats difficiles
                     attack_interval = 0.02
             
-            while self.is_in_battle() and battle_attempts < max_attempts and self.running:
+            health_check_interval = 3  # Vérifier la santé toutes les 3 secondes
+            last_health_check_time = time.time()
+            last_health_value = None
+            health_not_changed_counter = 0
+            max_health_unchanged = 4  # Après 4 vérifications sans changement (12 sec), considérer comme bloqué
+            
+            while self.is_in_battle() and self.running:
                 current_time = time.time()
                 
                 # Récupérer les informations de santé actuelles
                 current_health_info = self.get_enemy_health_info()
+                
+                # Vérification périodique de la progression de la santé
+                if current_time - last_health_check_time > health_check_interval:
+                    if current_health_info:
+                        current_health = current_health_info["current"]
+                        
+                        # Afficher la progression
+                        self.log(f"Progression du combat: {current_health_info['text']} ({current_health_info['percentage']:.1f}%)")
+                        
+                        # Vérifier si la santé a changé depuis la dernière vérification
+                        if last_health_value is not None:
+                            if abs(current_health - last_health_value) < 1:  # Seuil minimal de changement
+                                health_not_changed_counter += 1
+                                self.log(f"⚠️ Santé semble bloquée ({health_not_changed_counter}/{max_health_unchanged} vérifications)")
+                                
+                                if health_not_changed_counter >= max_health_unchanged:
+                                    self.log("❌ Combat bloqué: la santé n'a pas changé pendant trop longtemps")
+                                    return False
+                            else:
+                                # Réinitialiser le compteur si la santé change
+                                health_not_changed_counter = 0
+                        
+                        last_health_value = current_health
+                    last_health_check_time = current_time
                 
                 # Vérifier si nous avons des informations de santé valides
                 if current_health_info:
@@ -82,7 +112,6 @@ class PokeclickerBotDungeonCombat:
                             # La santé n'a pas changé significativement
                             if (current_time - last_check_time) > 0.5:  # Vérification plus fréquente
                                 stuck_counter += 1
-                                self.log(f"Combat semble bloqué (HP: {current_health_info['text']}, inchangé après {stuck_counter} vérifications)")
                                 
                                 if stuck_counter >= 2:  # Réagir plus rapidement aux blocages
                                     self.log("Tentative de déblocage du combat...")
@@ -104,8 +133,6 @@ class PokeclickerBotDungeonCombat:
                             
                             # Adapter la fréquence des logs en fonction de la progression
                             hp_percentage = current_health_info["percentage"]
-                            if battle_attempts % 20 == 0 or hp_percentage < 30 or stuck_counter > 0:
-                                self.log(f"Progression du combat: {current_health_info['text']} ({hp_percentage:.1f}%)")
                             
                             # Adapter la stratégie en fonction de la progression du combat
                             if hp_percentage < 20 and attack_interval > 0.02:
@@ -137,7 +164,7 @@ class PokeclickerBotDungeonCombat:
                 
                 # Monitoring avancé pour les combats longs
                 battle_duration = int(current_time - battle_start_time)
-                if battle_attempts % 30 == 0:
+                if battle_attempts % 100 == 0:
                     self.log(f"Combat en cours depuis {battle_duration}s, {battle_attempts} attaques effectuées")
                     
                     # Si le combat dure vraiment trop longtemps, essayer une approche plus agressive
@@ -149,15 +176,10 @@ class PokeclickerBotDungeonCombat:
                 time.sleep(attack_interval)
             
             battle_duration = int(time.time() - battle_start_time)
-            
-            if battle_attempts >= max_attempts:
-                self.log(f"Le combat a duré trop longtemps ({battle_duration}s), passage à la suite...")
-                return False
-            else:
-                dps = battle_attempts / max(1, battle_duration)  # Attaques par seconde
-                self.log(f"Combat terminé en {battle_duration}s après {battle_attempts} attaques! ({dps:.1f} attaques/s)")
-                return True
-                
+            dps = battle_attempts / max(1, battle_duration)  # Attaques par seconde
+            self.log(f"Combat terminé en {battle_duration}s après {battle_attempts} attaques! ({dps:.1f} attaques/s)")
+            return True
+                    
         except Exception as e:
             self.log(f"Erreur pendant le combat: {str(e)}")
             return False
@@ -350,7 +372,7 @@ class PokeclickerBotDungeonCombat:
             self.driver.execute_script("arguments[0].click();", chest_button)
             
             # Attendre que le coffre soit ouvert
-            time.sleep(0.5)
+            time.sleep(0.3)
             
             # Vérifier si un message de récompense est visible
             try:
@@ -360,6 +382,10 @@ class PokeclickerBotDungeonCombat:
                     self.log(f"Récompense obtenue: {reward_content}")
             except:
                 pass
+
+            # OPTIMISATION: Réinitialiser le cache de cible finale après avoir ouvert un coffre
+            if hasattr(self, 'cached_final_target'):
+                self.cached_final_target = None
                 
             return True
             
